@@ -172,6 +172,8 @@ type OrderRecord = {
   transactionFeeMyr: number;
   otherDiscountMyr: number;
   otherFeeMyr: number;
+  finalProfitMyr: number;
+  isProfitFinalized: boolean;
   notes: string;
   createdAt: string;
 };
@@ -322,18 +324,122 @@ export default function ERPRefactorV2Page() {
       setPurchases(mapped);
     };
 
+    const loadOrders = async () => {
+      const { data, error } = await supabase
+        .from("orders")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("读取 orders 失败:", error);
+        return;
+      }
+
+      const mapped = (data || []).map((item) => ({
+        id: item.id,
+        orderNo: item.order_no || "",
+        orderDate: item.order_date || "",
+        customer: item.customer || "",
+        platform: item.platform || "",
+        sku: item.sku || "",
+        productName: item.product_name || "",
+        variant: item.variant || "",
+        qty: Number(item.qty || 0),
+        preferredWarehouse: item.preferred_warehouse || "马来西亚仓库",
+        status: item.status || "待采购",
+        hasStock: !!item.has_stock,
+        stockMessage: item.stock_message || "",
+        isStockLocked: !!item.is_stock_locked,
+        isStockOut: !!item.is_stock_out,
+        stockOutDate: item.stock_out_date || "",
+        visiblePurchaseUnitCostMyr: Number(item.visible_purchase_unit_cost_myr || 0),
+        lockedUnitCostMyr: Number(item.locked_unit_cost_myr || 0),
+        lockedTotalCostMyr: Number(item.locked_total_cost_myr || 0),
+        isCostLocked: !!item.is_cost_locked,
+        salePriceMyr: Number(item.sale_price_myr || 0),
+        receivableMyr: Number(item.receivable_myr || 0),
+        shippingFeeMyr: Number(item.shipping_fee_myr || 0),
+        voucherMyr: Number(item.voucher_myr || 0),
+        commissionFeeMyr: Number(item.commission_fee_myr || 0),
+        transactionFeeMyr: Number(item.transaction_fee_myr || 0),
+        otherDiscountMyr: Number(item.other_discount_myr || 0),
+        otherFeeMyr: Number(item.other_fee_myr || 0),
+        finalProfitMyr: Number(item.final_profit_myr || 0),
+        isProfitFinalized: !!item.is_profit_finalized,
+        notes: item.notes || "",
+        createdAt: item.created_at || "",
+      }));
+
+      setOrders(mapped);
+    };
+
+    const loadInventory = async () => {
+      const { data, error } = await supabase
+        .from("inventory")
+        .select("*")
+        .order("updated_at", { ascending: false });
+
+      if (error) {
+        console.error("读取 inventory 失败:", error);
+        return;
+      }
+
+      const mapped = (data || []).map((item) => ({
+        id: item.id,
+        warehouse: item.warehouse || "中国仓库",
+        sku: item.sku || "",
+        productName: item.product_name || "",
+        variant: item.variant || "",
+        stockQty: Number(item.stock_qty || 0),
+        lockedQty: Number(item.locked_qty || 0),
+        unitCostMyr: Number(item.unit_cost_myr || 0),
+        supplier: item.supplier || "",
+        updatedAt: item.updated_at || "",
+      }));
+
+      setInventory(mapped);
+    };
+
+    const loadTransfers = async () => {
+      const { data, error } = await supabase
+        .from("transfers")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("读取 transfers 失败:", error);
+        return;
+      }
+
+      const mapped = (data || []).map((item) => ({
+        id: item.id,
+        transferNo: item.transfer_no || "",
+        purchaseNos: Array.isArray(item.purchase_nos) ? item.purchase_nos : [],
+        fromWarehouse: item.from_warehouse || "中国仓库",
+        toWarehouse: item.to_warehouse || "马来西亚仓库",
+        courierCompany: item.courier_company || "",
+        trackingNo: item.tracking_no || "",
+        transferFeeMyr: Number(item.transfer_fee_myr || 0),
+        status: item.status || "待出库",
+        totalQty: Number(item.total_qty || 0),
+        items: Array.isArray(item.items) ? item.items : [],
+        isSourceSynced: !!item.is_source_synced,
+        isTargetSynced: !!item.is_target_synced,
+        createdAt: item.created_at || "",
+      }));
+
+      setTransfers(mapped);
+    };
+
     loadProducts();
     loadPurchases();
+    loadOrders();
+    loadInventory();
+    loadTransfers();
     setExpenses(safeParse(localStorage.getItem(LS_KEYS.expenses), [] as ExpenseItem[]));
-    setTransfers(safeParse(localStorage.getItem(LS_KEYS.transfers), [] as TransferRecord[]));
-    setInventory(safeParse(localStorage.getItem(LS_KEYS.inventory), [] as InventoryItem[]));
-    setOrders(safeParse(localStorage.getItem(LS_KEYS.orders), [] as OrderRecord[]));
   }, []);
 
   useEffect(() => localStorage.setItem(LS_KEYS.expenses, JSON.stringify(expenses)), [expenses]);
-  useEffect(() => localStorage.setItem(LS_KEYS.transfers, JSON.stringify(transfers)), [transfers]);
-  useEffect(() => localStorage.setItem(LS_KEYS.inventory, JSON.stringify(inventory)), [inventory]);
-  useEffect(() => localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders)), [orders]);
 
   const purchaseCalc = useMemo(() => {
     const qty = num(purchaseForm.qty);
@@ -438,8 +544,8 @@ export default function ERPRefactorV2Page() {
     const totalReceivable = orders.reduce((s, o) => s + num(o.receivableMyr), 0);
     const totalLockedCost = orders.reduce((s, o) => s + num(o.lockedTotalCostMyr), 0);
     const totalProfitCompleted = orders
-      .filter((o) => o.status === "已完成")
-      .reduce((s, o) => s + (num(o.receivableMyr) - num(o.lockedTotalCostMyr)), 0);
+      .filter((o) => o.isProfitFinalized)
+      .reduce((s, o) => s + num(o.finalProfitMyr), 0);
     const totalInventoryQty = inventory.reduce((s, i) => s + num(i.stockQty), 0);
     const totalExpenseCost = expenses.reduce((s, e) => s + num(e.amountMyr), 0);
 
@@ -496,6 +602,90 @@ export default function ERPRefactorV2Page() {
     };
     draft.unshift(created);
     return created;
+  }
+
+  async function refreshInventoryFromSupabase() {
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("*")
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      console.error("刷新 inventory 失败:", error);
+      return;
+    }
+
+    const mapped = (data || []).map((item) => ({
+      id: item.id,
+      warehouse: item.warehouse || "中国仓库",
+      sku: item.sku || "",
+      productName: item.product_name || "",
+      variant: item.variant || "",
+      stockQty: Number(item.stock_qty || 0),
+      lockedQty: Number(item.locked_qty || 0),
+      unitCostMyr: Number(item.unit_cost_myr || 0),
+      supplier: item.supplier || "",
+      updatedAt: item.updated_at || "",
+    }));
+
+    setInventory(mapped);
+  }
+
+  async function upsertInventoryRecord(params: {
+    warehouse: WarehouseName;
+    sku: string;
+    productName: string;
+    variant: string;
+    stockQty?: number;
+    lockedQty?: number;
+    unitCostMyr?: number;
+    supplier?: string;
+  }) {
+    const { warehouse, sku, productName, variant } = params;
+    const existing = inventory.find(
+      (i) =>
+        i.warehouse === warehouse &&
+        i.sku.trim().toLowerCase() === sku.trim().toLowerCase() &&
+        (i.variant || "") === (variant || "")
+    );
+
+    if (existing) {
+      const payload = {
+        warehouse,
+        sku,
+        product_name: productName,
+        variant,
+        stock_qty: params.stockQty ?? existing.stockQty,
+        locked_qty: params.lockedQty ?? existing.lockedQty,
+        unit_cost_myr: params.unitCostMyr ?? existing.unitCostMyr,
+        supplier: params.supplier ?? existing.supplier,
+        updated_at: new Date().toLocaleString(),
+      };
+
+      const { error } = await supabase.from("inventory").update(payload).eq("id", existing.id);
+      if (error) {
+        console.error("更新 inventory 失败:", error);
+        throw error;
+      }
+    } else {
+      const payload = {
+        warehouse,
+        sku,
+        product_name: productName,
+        variant,
+        stock_qty: params.stockQty ?? 0,
+        locked_qty: params.lockedQty ?? 0,
+        unit_cost_myr: params.unitCostMyr ?? 0,
+        supplier: params.supplier ?? "",
+        updated_at: new Date().toLocaleString(),
+      };
+
+      const { error } = await supabase.from("inventory").insert(payload);
+      if (error) {
+        console.error("新增 inventory 失败:", error);
+        throw error;
+      }
+    }
   }
 
   function getAvailableStock(warehouse: WarehouseName, sku: string, variant: string) {
@@ -652,23 +842,29 @@ export default function ERPRefactorV2Page() {
     }
 
     if (payload.is_inventory_synced) {
-      setInventory((prev) => {
-        const next = [...prev];
-        const item = ensureInventoryRecord(
-          next,
-          payload.warehouse as WarehouseName,
-          payload.sku,
-          payload.product_name,
-          payload.variant,
-          payload.supplier,
-          payload.unit_cost_myr
+      try {
+        const existingInv = inventory.find(
+          (i) =>
+            i.warehouse === payload.warehouse &&
+            i.sku.trim().toLowerCase() === payload.sku.trim().toLowerCase() &&
+            (i.variant || "") === (payload.variant || "")
         );
-        item.stockQty = num(item.stockQty) + qty;
-        item.unitCostMyr = payload.unit_cost_myr;
-        item.supplier = payload.supplier;
-        item.updatedAt = new Date().toLocaleString();
-        return [...next];
-      });
+
+        await upsertInventoryRecord({
+          warehouse: payload.warehouse as WarehouseName,
+          sku: payload.sku,
+          productName: payload.product_name,
+          variant: payload.variant,
+          stockQty: (existingInv?.stockQty || 0) + qty,
+          lockedQty: existingInv?.lockedQty || 0,
+          unitCostMyr: payload.unit_cost_myr,
+          supplier: payload.supplier,
+        });
+        await refreshInventoryFromSupabase();
+      } catch (e) {
+        alert("采购入库同步库存失败");
+        console.error(e);
+      }
     }
 
     const { data, error } = await supabase
@@ -728,26 +924,32 @@ export default function ERPRefactorV2Page() {
       )
     );
 
-    setInventory((prev) => {
-      const next = [...prev];
-      const item = ensureInventoryRecord(
-        next,
-        purchase.warehouse,
-        purchase.sku,
-        purchase.productName,
-        purchase.variant,
-        purchase.supplier,
-        purchase.unitCostMyr
+    try {
+      const existingInv = inventory.find(
+        (i) =>
+          i.warehouse === purchase.warehouse &&
+          i.sku.trim().toLowerCase() === purchase.sku.trim().toLowerCase() &&
+          (i.variant || "") === (purchase.variant || "")
       );
-      item.stockQty = num(item.stockQty) + num(purchase.qty);
-      item.unitCostMyr = purchase.unitCostMyr;
-      item.supplier = purchase.supplier;
-      item.updatedAt = new Date().toLocaleString();
-      return [...next];
-    });
+
+      await upsertInventoryRecord({
+        warehouse: purchase.warehouse,
+        sku: purchase.sku,
+        productName: purchase.productName,
+        variant: purchase.variant,
+        stockQty: (existingInv?.stockQty || 0) + num(purchase.qty),
+        lockedQty: existingInv?.lockedQty || 0,
+        unitCostMyr: purchase.unitCostMyr,
+        supplier: purchase.supplier,
+      });
+      await refreshInventoryFromSupabase();
+    } catch (e) {
+      alert("签收入库同步库存失败");
+      console.error(e);
+    }
   };
 
-  const createOrder = () => {
+  const createOrder = async () => {
     if (!orderForm.orderNo || !orderForm.orderDate || !orderForm.sku || num(orderForm.qty) <= 0) {
       alert("请填写订单号、订单日期、SKU 和数量。");
       return;
@@ -758,44 +960,98 @@ export default function ERPRefactorV2Page() {
     const stockInfo = computeOrderStockStatus(orderForm.preferredWarehouse, orderForm.sku, variant, num(orderForm.qty));
     const currentUnitCost = getCurrentUnitCost(orderForm.preferredWarehouse, orderForm.sku, variant);
 
-    const order: OrderRecord = {
-      id: crypto.randomUUID(),
-      orderNo: orderForm.orderNo,
-      orderDate: orderForm.orderDate,
+    const payload = {
+      order_no: orderForm.orderNo,
+      order_date: orderForm.orderDate,
       customer: orderForm.customer,
       platform: orderForm.platform,
       sku: orderForm.sku,
-      productName,
+      product_name: productName,
       variant,
       qty: num(orderForm.qty),
-      preferredWarehouse: orderForm.preferredWarehouse,
+      preferred_warehouse: orderForm.preferredWarehouse,
       status: stockInfo.hasStock ? "准备发货" : "待采购",
-      hasStock: stockInfo.hasStock,
-      stockMessage: stockInfo.stockMessage,
-      isStockLocked: false,
-      isStockOut: false,
-      stockOutDate: "",
-      visiblePurchaseUnitCostMyr: currentUnitCost,
-      lockedUnitCostMyr: 0,
-      lockedTotalCostMyr: 0,
-      isCostLocked: false,
-      salePriceMyr: 0,
-      receivableMyr: 0,
-      shippingFeeMyr: 0,
-      voucherMyr: 0,
-      commissionFeeMyr: 0,
-      transactionFeeMyr: 0,
-      otherDiscountMyr: 0,
-      otherFeeMyr: 0,
+      has_stock: stockInfo.hasStock,
+      stock_message: stockInfo.stockMessage,
+      is_stock_locked: false,
+      is_stock_out: false,
+      stock_out_date: "",
+      visible_purchase_unit_cost_myr: currentUnitCost,
+      locked_unit_cost_myr: 0,
+      locked_total_cost_myr: 0,
+      is_cost_locked: false,
+      sale_price_myr: 0,
+      receivable_myr: 0,
+      shipping_fee_myr: 0,
+      voucher_myr: 0,
+      commission_fee_myr: 0,
+      transaction_fee_myr: 0,
+      other_discount_myr: 0,
+      other_fee_myr: 0,
+      final_profit_myr: 0,
+      is_profit_finalized: false,
       notes: orderForm.notes,
-      createdAt: new Date().toLocaleString(),
     };
 
-    setOrders((prev) => [order, ...prev]);
+    const { error: insertError } = await supabase.from("orders").insert(payload);
+
+    if (insertError) {
+      alert("新增订单失败");
+      console.error(insertError);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("orders")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      alert("刷新订单列表失败");
+      console.error(error);
+      return;
+    }
+
+    const mapped = (data || []).map((item) => ({
+      id: item.id,
+      orderNo: item.order_no || "",
+      orderDate: item.order_date || "",
+      customer: item.customer || "",
+      platform: item.platform || "",
+      sku: item.sku || "",
+      productName: item.product_name || "",
+      variant: item.variant || "",
+      qty: Number(item.qty || 0),
+      preferredWarehouse: item.preferred_warehouse || "马来西亚仓库",
+      status: item.status || "待采购",
+      hasStock: !!item.has_stock,
+      stockMessage: item.stock_message || "",
+      isStockLocked: !!item.is_stock_locked,
+      isStockOut: !!item.is_stock_out,
+      stockOutDate: item.stock_out_date || "",
+      visiblePurchaseUnitCostMyr: Number(item.visible_purchase_unit_cost_myr || 0),
+      lockedUnitCostMyr: Number(item.locked_unit_cost_myr || 0),
+      lockedTotalCostMyr: Number(item.locked_total_cost_myr || 0),
+      isCostLocked: !!item.is_cost_locked,
+      salePriceMyr: Number(item.sale_price_myr || 0),
+      receivableMyr: Number(item.receivable_myr || 0),
+      shippingFeeMyr: Number(item.shipping_fee_myr || 0),
+      voucherMyr: Number(item.voucher_myr || 0),
+      commissionFeeMyr: Number(item.commission_fee_myr || 0),
+      transactionFeeMyr: Number(item.transaction_fee_myr || 0),
+      otherDiscountMyr: Number(item.other_discount_myr || 0),
+      otherFeeMyr: Number(item.other_fee_myr || 0),
+      finalProfitMyr: Number(item.final_profit_myr || 0),
+      isProfitFinalized: !!item.is_profit_finalized,
+      notes: item.notes || "",
+      createdAt: item.created_at || "",
+    }));
+
+    setOrders(mapped);
     setOrderForm(defaultOrder);
   };
 
-  const toggleOrderLockStock = (id: string) => {
+  const toggleOrderLockStock = async (id: string) => {
     const order = orders.find((o) => o.id === id);
     if (!order || order.isStockOut) return;
 
@@ -811,27 +1067,79 @@ export default function ERPRefactorV2Page() {
         alert("可用库存不足，无法锁定。");
         return;
       }
-      setInventory((prev) =>
-        prev.map((i) =>
-          i.id === inventoryItem.id
-            ? { ...i, lockedQty: num(i.lockedQty) + num(order.qty), updatedAt: new Date().toLocaleString() }
-            : i
-        )
-      );
+      try {
+        await upsertInventoryRecord({
+          warehouse: order.preferredWarehouse,
+          sku: order.sku,
+          productName: order.productName,
+          variant: order.variant,
+          stockQty: inventoryItem.stockQty,
+          lockedQty: num(inventoryItem.lockedQty) + num(order.qty),
+          unitCostMyr: inventoryItem.unitCostMyr,
+          supplier: inventoryItem.supplier,
+        });
+        await refreshInventoryFromSupabase();
+      } catch (e) {
+        alert("锁定库存失败");
+        console.error(e);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("orders")
+        .update({
+          is_stock_locked: true,
+          has_stock: true,
+          stock_message: "已锁定库存",
+        })
+        .eq("id", id);
+
+      if (error) {
+        alert("更新订单失败");
+        console.error(error);
+        return;
+      }
+
       setOrders((prev) =>
         prev.map((o) =>
           o.id === id ? { ...o, isStockLocked: true, hasStock: true, stockMessage: "已锁定库存" } : o
         )
       );
     } else {
-      setInventory((prev) =>
-        prev.map((i) =>
-          i.id === inventoryItem.id
-            ? { ...i, lockedQty: Math.max(0, num(i.lockedQty) - num(order.qty)), updatedAt: new Date().toLocaleString() }
-            : i
-        )
-      );
+      try {
+        await upsertInventoryRecord({
+          warehouse: order.preferredWarehouse,
+          sku: order.sku,
+          productName: order.productName,
+          variant: order.variant,
+          stockQty: inventoryItem.stockQty,
+          lockedQty: Math.max(0, num(inventoryItem.lockedQty) - num(order.qty)),
+          unitCostMyr: inventoryItem.unitCostMyr,
+          supplier: inventoryItem.supplier,
+        });
+        await refreshInventoryFromSupabase();
+      } catch (e) {
+        alert("取消锁定库存失败");
+        console.error(e);
+        return;
+      }
       const stockInfo = computeOrderStockStatus(order.preferredWarehouse, order.sku, order.variant, order.qty);
+
+      const { error } = await supabase
+        .from("orders")
+        .update({
+          is_stock_locked: false,
+          has_stock: stockInfo.hasStock,
+          stock_message: stockInfo.stockMessage,
+        })
+        .eq("id", id);
+
+      if (error) {
+        alert("更新订单失败");
+        console.error(error);
+        return;
+      }
+
       setOrders((prev) =>
         prev.map((o) =>
           o.id === id ? { ...o, isStockLocked: false, hasStock: stockInfo.hasStock, stockMessage: stockInfo.stockMessage } : o
@@ -840,7 +1148,7 @@ export default function ERPRefactorV2Page() {
     }
   };
 
-  const stockOutOrder = (id: string) => {
+  const stockOutOrder = async (id: string) => {
     const order = orders.find((o) => o.id === id);
     if (!order || order.isStockOut) return;
 
@@ -862,18 +1170,46 @@ export default function ERPRefactorV2Page() {
     const lockedUnitCostMyr = currentUnitCost;
     const lockedTotalCostMyr = currentUnitCost * num(order.qty);
 
-    setInventory((prev) =>
-      prev.map((i) =>
-        i.id === inventoryItem.id
-          ? {
-              ...i,
-              stockQty: Math.max(0, num(i.stockQty) - num(order.qty)),
-              lockedQty: Math.max(0, num(i.lockedQty) - (order.isStockLocked ? num(order.qty) : 0)),
-              updatedAt: new Date().toLocaleString(),
-            }
-          : i
-      )
-    );
+    try {
+      await upsertInventoryRecord({
+        warehouse: order.preferredWarehouse,
+        sku: order.sku,
+        productName: order.productName,
+        variant: order.variant,
+        stockQty: Math.max(0, num(inventoryItem.stockQty) - num(order.qty)),
+        lockedQty: Math.max(0, num(inventoryItem.lockedQty) - (order.isStockLocked ? num(order.qty) : 0)),
+        unitCostMyr: inventoryItem.unitCostMyr,
+        supplier: inventoryItem.supplier,
+      });
+      await refreshInventoryFromSupabase();
+    } catch (e) {
+      alert("订单出库同步库存失败");
+      console.error(e);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        is_stock_locked: false,
+        is_stock_out: true,
+        stock_out_date: new Date().toLocaleString(),
+        locked_unit_cost_myr: lockedUnitCostMyr,
+        locked_total_cost_myr: lockedTotalCostMyr,
+        is_cost_locked: true,
+        visible_purchase_unit_cost_myr: lockedUnitCostMyr,
+        status: "已发货",
+        stock_message: "已出库",
+        has_stock: true,
+        is_profit_finalized: false,
+      })
+      .eq("id", id);
+
+    if (error) {
+      alert("订单出库失败");
+      console.error(error);
+      return;
+    }
 
     setOrders((prev) =>
       prev.map((o) =>
@@ -890,38 +1226,87 @@ export default function ERPRefactorV2Page() {
               status: "已发货",
               stockMessage: "已出库",
               hasStock: true,
+              isProfitFinalized: false,
             }
           : o
       )
     );
   };
 
-  const updateOrderField = (id: string, field: keyof OrderRecord, value: string | number | boolean) => {
+  const updateOrderField = async (id: string, field: keyof OrderRecord, value: string | number | boolean) => {
+    const target = orders.find((o) => o.id === id);
+    if (!target) return;
+
+    const updated = { ...target, [field]: value } as OrderRecord;
+    const currentUnitCost = updated.isCostLocked
+      ? updated.lockedUnitCostMyr
+      : getCurrentUnitCost(updated.preferredWarehouse, updated.sku, updated.variant);
+
+    updated.visiblePurchaseUnitCostMyr = currentUnitCost;
+
+    if (!updated.isStockLocked && !updated.isStockOut) {
+      const stockInfo = computeOrderStockStatus(updated.preferredWarehouse, updated.sku, updated.variant, updated.qty);
+      updated.hasStock = stockInfo.hasStock;
+      updated.stockMessage = stockInfo.stockMessage;
+    }
+
+    if (updated.status === "已完成" && updated.isCostLocked) {
+      updated.finalProfitMyr = num(updated.receivableMyr) - num(updated.lockedTotalCostMyr);
+      updated.isProfitFinalized = true;
+    } else if (updated.status !== "已完成") {
+      updated.isProfitFinalized = false;
+    }
+
+    const payload = {
+      order_no: updated.orderNo,
+      order_date: updated.orderDate,
+      customer: updated.customer,
+      platform: updated.platform,
+      sku: updated.sku,
+      product_name: updated.productName,
+      variant: updated.variant,
+      qty: updated.qty,
+      preferred_warehouse: updated.preferredWarehouse,
+      status: updated.status,
+      has_stock: updated.hasStock,
+      stock_message: updated.stockMessage,
+      is_stock_locked: updated.isStockLocked,
+      is_stock_out: updated.isStockOut,
+      stock_out_date: updated.stockOutDate,
+      visible_purchase_unit_cost_myr: updated.visiblePurchaseUnitCostMyr,
+      locked_unit_cost_myr: updated.lockedUnitCostMyr,
+      locked_total_cost_myr: updated.lockedTotalCostMyr,
+      is_cost_locked: updated.isCostLocked,
+      sale_price_myr: updated.salePriceMyr,
+      receivable_myr: updated.receivableMyr,
+      shipping_fee_myr: updated.shippingFeeMyr,
+      voucher_myr: updated.voucherMyr,
+      commission_fee_myr: updated.commissionFeeMyr,
+      transaction_fee_myr: updated.transactionFeeMyr,
+      other_discount_myr: updated.otherDiscountMyr,
+      other_fee_myr: updated.otherFeeMyr,
+      final_profit_myr: updated.finalProfitMyr,
+      is_profit_finalized: updated.isProfitFinalized,
+      notes: updated.notes,
+    };
+
+    const { error } = await supabase.from("orders").update(payload).eq("id", id);
+
+    if (error) {
+      alert("更新订单失败");
+      console.error(error);
+      return;
+    }
+
     setOrders((prev) =>
       prev.map((o) => {
         if (o.id !== id) return o;
-        const updated = { ...o, [field]: value } as OrderRecord;
-        const currentUnitCost = updated.isCostLocked
-          ? updated.lockedUnitCostMyr
-          : getCurrentUnitCost(updated.preferredWarehouse, updated.sku, updated.variant);
-        updated.visiblePurchaseUnitCostMyr = currentUnitCost;
-
-        if (!updated.isStockLocked && !updated.isStockOut) {
-          const stockInfo = computeOrderStockStatus(updated.preferredWarehouse, updated.sku, updated.variant, updated.qty);
-          updated.hasStock = stockInfo.hasStock;
-          updated.stockMessage = stockInfo.stockMessage;
-        }
-
-        if (updated.status === "已完成" && updated.isCostLocked) {
-          updated.notes = updated.notes;
-        }
-
         return updated;
       })
     );
   };
 
-  const createTransfer = () => {
+  const createTransfer = async () => {
     const matchedPurchases = purchases.filter((p) => transferPurchaseNoList.includes(p.purchaseNo.trim()));
     if (transferPurchaseNoList.length === 0 || matchedPurchases.length === 0) {
       alert("请输入一个或多个已有采购单号。");
@@ -962,62 +1347,154 @@ export default function ERPRefactorV2Page() {
       finalUnitCostMyr: num(i.baseUnitCostMyr) + feePerUnit,
     }));
 
-    const transfer: TransferRecord = {
-      id: crypto.randomUUID(),
-      transferNo: `TRF-${new Date().getFullYear()}${String(Date.now()).slice(-6)}`,
-      purchaseNos: transferPurchaseNoList,
-      fromWarehouse: transferForm.fromWarehouse,
-      toWarehouse: transferForm.toWarehouse,
-      courierCompany: transferForm.courierCompany,
-      trackingNo: transferForm.trackingNo,
-      transferFeeMyr: num(transferForm.transferFeeMyr),
+    const payload = {
+      transfer_no: `TRF-${new Date().getFullYear()}${String(Date.now()).slice(-6)}`,
+      purchase_nos: transferPurchaseNoList,
+      from_warehouse: transferForm.fromWarehouse,
+      to_warehouse: transferForm.toWarehouse,
+      courier_company: transferForm.courierCompany,
+      tracking_no: transferForm.trackingNo,
+      transfer_fee_myr: num(transferForm.transferFeeMyr),
       status: transferForm.status,
-      totalQty,
+      total_qty: totalQty,
       items: finalItems,
-      isSourceSynced: false,
-      isTargetSynced: false,
-      createdAt: new Date().toLocaleString(),
+      is_source_synced: false,
+      is_target_synced: false,
     };
 
-    setTransfers((prev) => [transfer, ...prev]);
+    const { error: insertError } = await supabase.from("transfers").insert(payload);
+
+    if (insertError) {
+      alert("新增调拨单失败");
+      console.error(insertError);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("transfers")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      alert("刷新调拨单列表失败");
+      console.error(error);
+      return;
+    }
+
+    const mapped = (data || []).map((item) => ({
+      id: item.id,
+      transferNo: item.transfer_no || "",
+      purchaseNos: Array.isArray(item.purchase_nos) ? item.purchase_nos : [],
+      fromWarehouse: item.from_warehouse || "中国仓库",
+      toWarehouse: item.to_warehouse || "马来西亚仓库",
+      courierCompany: item.courier_company || "",
+      trackingNo: item.tracking_no || "",
+      transferFeeMyr: Number(item.transfer_fee_myr || 0),
+      status: item.status || "待出库",
+      totalQty: Number(item.total_qty || 0),
+      items: Array.isArray(item.items) ? item.items : [],
+      isSourceSynced: !!item.is_source_synced,
+      isTargetSynced: !!item.is_target_synced,
+      createdAt: item.created_at || "",
+    }));
+
+    setTransfers(mapped);
     setTransferForm(defaultTransfer);
   };
 
-  const markTransferOutbound = (id: string) => {
+  const markTransferOutbound = async (id: string) => {
     const transfer = transfers.find((t) => t.id === id);
     if (!transfer || transfer.isSourceSynced) return;
 
-    setInventory((prev) => {
-      let next = [...prev];
+    try {
       for (const item of transfer.items) {
-        const inv = getInventoryRecord(transfer.fromWarehouse, item.sku, item.variant);
-        if (!inv) continue;
-        next = next.map((row) =>
-          row.id === inv.id
-            ? { ...row, stockQty: Math.max(0, num(row.stockQty) - num(item.qty)), updatedAt: new Date().toLocaleString() }
-            : row
+        const inv = inventory.find(
+          (row) =>
+            row.warehouse === transfer.fromWarehouse &&
+            row.sku.trim().toLowerCase() === item.sku.trim().toLowerCase() &&
+            (row.variant || "") === (item.variant || "")
         );
+        if (!inv) continue;
+
+        await upsertInventoryRecord({
+          warehouse: transfer.fromWarehouse,
+          sku: item.sku,
+          productName: item.productName,
+          variant: item.variant,
+          stockQty: Math.max(0, num(inv.stockQty) - num(item.qty)),
+          lockedQty: inv.lockedQty,
+          unitCostMyr: inv.unitCostMyr,
+          supplier: inv.supplier,
+        });
       }
-      return next;
-    });
+      await refreshInventoryFromSupabase();
+    } catch (e) {
+      alert("调拨出库同步库存失败");
+      console.error(e);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("transfers")
+      .update({
+        status: "在途",
+        is_source_synced: true,
+      })
+      .eq("id", id);
+
+    if (error) {
+      alert("更新调拨单失败");
+      console.error(error);
+      return;
+    }
 
     setTransfers((prev) => prev.map((t) => (t.id === id ? { ...t, status: "在途", isSourceSynced: true } : t)));
   };
 
-  const markTransferArrival = (id: string) => {
+  const markTransferArrival = async (id: string) => {
     const transfer = transfers.find((t) => t.id === id);
     if (!transfer || transfer.isTargetSynced) return;
 
-    setInventory((prev) => {
-      const next = [...prev];
+    try {
       for (const item of transfer.items) {
-        const target = ensureInventoryRecord(next, transfer.toWarehouse, item.sku, item.productName, item.variant, "调拨入库", item.finalUnitCostMyr);
-        target.stockQty = num(target.stockQty) + num(item.qty);
-        target.unitCostMyr = item.finalUnitCostMyr;
-        target.updatedAt = new Date().toLocaleString();
+        const existingInv = inventory.find(
+          (row) =>
+            row.warehouse === transfer.toWarehouse &&
+            row.sku.trim().toLowerCase() === item.sku.trim().toLowerCase() &&
+            (row.variant || "") === (item.variant || "")
+        );
+
+        await upsertInventoryRecord({
+          warehouse: transfer.toWarehouse,
+          sku: item.sku,
+          productName: item.productName,
+          variant: item.variant,
+          stockQty: (existingInv?.stockQty || 0) + num(item.qty),
+          lockedQty: existingInv?.lockedQty || 0,
+          unitCostMyr: item.finalUnitCostMyr,
+          supplier: existingInv?.supplier || "调拨入库",
+        });
       }
-      return [...next];
-    });
+      await refreshInventoryFromSupabase();
+    } catch (e) {
+      alert("调拨到货同步库存失败");
+      console.error(e);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("transfers")
+      .update({
+        status: "已入库",
+        is_target_synced: true,
+      })
+      .eq("id", id);
+
+    if (error) {
+      alert("更新调拨单失败");
+      console.error(error);
+      return;
+    }
 
     setTransfers((prev) => prev.map((t) => (t.id === id ? { ...t, status: "已入库", isTargetSynced: true } : t)));
   };
@@ -1055,9 +1532,48 @@ export default function ERPRefactorV2Page() {
 
     setPurchases((prev) => prev.filter((x) => x.id !== id));
   };
-  const deleteTransfer = (id: string) => setTransfers((prev) => prev.filter((x) => x.id !== id));
-  const deleteInventory = (id: string) => setInventory((prev) => prev.filter((x) => x.id !== id));
-  const deleteOrder = (id: string) => setOrders((prev) => prev.filter((x) => x.id !== id));
+  const deleteTransfer = async (id: string) => {
+    const { error } = await supabase
+      .from("transfers")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("删除调拨单失败");
+      console.error(error);
+      return;
+    }
+
+    setTransfers((prev) => prev.filter((x) => x.id !== id));
+  };
+  const deleteInventory = async (id: string) => {
+    const { error } = await supabase
+      .from("inventory")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("删除库存失败");
+      console.error(error);
+      return;
+    }
+
+    setInventory((prev) => prev.filter((x) => x.id !== id));
+  };
+  const deleteOrder = async (id: string) => {
+    const { error } = await supabase
+      .from("orders")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("删除订单失败");
+      console.error(error);
+      return;
+    }
+
+    setOrders((prev) => prev.filter((x) => x.id !== id));
+  };
 
   const resetAll = () => {
     if (!confirm("确定清空所有资料吗？")) return;
@@ -1624,8 +2140,8 @@ export default function ERPRefactorV2Page() {
                           <TableRow><TableCell colSpan={13} className="py-8 text-center text-slate-500">没有订单记录</TableCell></TableRow>
                         ) : (
                           filteredOrders.map((item) => {
-                            const profitCompleted = item.status === "已完成"
-                              ? num(item.receivableMyr) - num(item.lockedTotalCostMyr)
+                            const profitCompleted = item.isProfitFinalized
+                              ? num(item.finalProfitMyr)
                               : null;
                             const feeOpen = !!openFeeRows[item.id];
 

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { supabase } from "@/lib/supabase";
 import {
   Trash2,
   Plus,
@@ -265,7 +266,31 @@ export default function ERPRefactorV2Page() {
   const [openFeeRows, setOpenFeeRows] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    setProducts(safeParse(localStorage.getItem(LS_KEYS.products), [] as ProductRecord[]));
+    const loadProducts = async () => {
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("读取 products 失败:", error);
+        return;
+      }
+
+      const mapped = (data || []).map((item) => ({
+        id: item.id,
+        chineseName: item.chinese_name || "",
+        model: item.model || "",
+        spec: item.spec || "",
+        sku: item.sku || "",
+        imageUrl: item.image_url || "",
+        createdAt: item.created_at || "",
+      }));
+
+      setProducts(mapped);
+    };
+
+    loadProducts();
     setExpenses(safeParse(localStorage.getItem(LS_KEYS.expenses), [] as ExpenseItem[]));
     setPurchases(safeParse(localStorage.getItem(LS_KEYS.purchases), [] as PurchaseRecord[]));
     setTransfers(safeParse(localStorage.getItem(LS_KEYS.transfers), [] as TransferRecord[]));
@@ -273,7 +298,6 @@ export default function ERPRefactorV2Page() {
     setOrders(safeParse(localStorage.getItem(LS_KEYS.orders), [] as OrderRecord[]));
   }, []);
 
-  useEffect(() => localStorage.setItem(LS_KEYS.products, JSON.stringify(products)), [products]);
   useEffect(() => localStorage.setItem(LS_KEYS.expenses, JSON.stringify(expenses)), [expenses]);
   useEffect(() => localStorage.setItem(LS_KEYS.purchases, JSON.stringify(purchases)), [purchases]);
   useEffect(() => localStorage.setItem(LS_KEYS.transfers, JSON.stringify(transfers)), [transfers]);
@@ -470,34 +494,79 @@ export default function ERPRefactorV2Page() {
     reader.readAsDataURL(file);
   };
 
-  const saveProduct = () => {
+  const saveProduct = async () => {
     if (!productForm.chineseName.trim() || !productForm.sku.trim()) {
       alert("请至少填写中文名称和 SKU。");
       return;
     }
-    const exists = products.find((p) => p.sku.trim().toLowerCase() === productForm.sku.trim().toLowerCase());
-    if (exists) {
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.id === exists.id
-            ? { ...p, chineseName: productForm.chineseName, model: productForm.model, spec: productForm.spec, imageUrl: productForm.imageUrl }
-            : p
-        )
-      );
-    } else {
-      setProducts((prev) => [
-        {
-          id: crypto.randomUUID(),
-          chineseName: productForm.chineseName,
+
+    const { data: existing, error: checkError } = await supabase
+      .from("products")
+      .select("id")
+      .eq("sku", productForm.sku.trim())
+      .maybeSingle();
+
+    if (checkError) {
+      alert("检查商品失败");
+      console.error(checkError);
+      return;
+    }
+
+    if (existing?.id) {
+      const { error } = await supabase
+        .from("products")
+        .update({
+          chinese_name: productForm.chineseName,
           model: productForm.model,
           spec: productForm.spec,
           sku: productForm.sku,
-          imageUrl: productForm.imageUrl,
-          createdAt: new Date().toLocaleString(),
-        },
-        ...prev,
-      ]);
+          image_url: productForm.imageUrl,
+        })
+        .eq("id", existing.id);
+
+      if (error) {
+        alert("更新商品失败");
+        console.error(error);
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("products").insert({
+        chinese_name: productForm.chineseName,
+        model: productForm.model,
+        spec: productForm.spec,
+        sku: productForm.sku,
+        image_url: productForm.imageUrl,
+      });
+
+      if (error) {
+        alert("新增商品失败");
+        console.error(error);
+        return;
+      }
     }
+
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      alert("刷新商品列表失败");
+      console.error(error);
+      return;
+    }
+
+    const mapped = (data || []).map((item) => ({
+      id: item.id,
+      chineseName: item.chinese_name || "",
+      model: item.model || "",
+      spec: item.spec || "",
+      sku: item.sku || "",
+      imageUrl: item.image_url || "",
+      createdAt: item.created_at || "",
+    }));
+
+    setProducts(mapped);
     setProductForm(defaultProduct);
   };
 
@@ -856,7 +925,20 @@ export default function ERPRefactorV2Page() {
     setOpenFeeRows((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const deleteProduct = (id: string) => setProducts((prev) => prev.filter((x) => x.id !== id));
+  const deleteProduct = async (id: string) => {
+    const { error } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("删除商品失败");
+      console.error(error);
+      return;
+    }
+
+    setProducts((prev) => prev.filter((x) => x.id !== id));
+  };
   const deleteExpense = (id: string) => setExpenses((prev) => prev.filter((x) => x.id !== id));
   const deletePurchase = (id: string) => setPurchases((prev) => prev.filter((x) => x.id !== id));
   const deleteTransfer = (id: string) => setTransfers((prev) => prev.filter((x) => x.id !== id));

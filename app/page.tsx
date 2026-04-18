@@ -290,16 +290,47 @@ export default function ERPRefactorV2Page() {
       setProducts(mapped);
     };
 
+    const loadPurchases = async () => {
+      const { data, error } = await supabase
+        .from("purchases")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("读取 purchases 失败:", error);
+        return;
+      }
+
+      const mapped = (data || []).map((item) => ({
+        id: item.id,
+        purchaseNo: item.purchase_no || "",
+        purchaseDate: item.purchase_date || "",
+        warehouse: item.warehouse || "中国仓库",
+        supplier: item.supplier || "",
+        sku: item.sku || "",
+        productName: item.product_name || "",
+        variant: item.variant || "",
+        qty: Number(item.qty || 0),
+        totalPurchaseMyr: Number(item.total_purchase_myr || 0),
+        unitCostMyr: Number(item.unit_cost_myr || 0),
+        trackingNo: item.tracking_no || "",
+        status: item.status || "待采购",
+        isInventorySynced: !!item.is_inventory_synced,
+        createdAt: item.created_at || "",
+      }));
+
+      setPurchases(mapped);
+    };
+
     loadProducts();
+    loadPurchases();
     setExpenses(safeParse(localStorage.getItem(LS_KEYS.expenses), [] as ExpenseItem[]));
-    setPurchases(safeParse(localStorage.getItem(LS_KEYS.purchases), [] as PurchaseRecord[]));
     setTransfers(safeParse(localStorage.getItem(LS_KEYS.transfers), [] as TransferRecord[]));
     setInventory(safeParse(localStorage.getItem(LS_KEYS.inventory), [] as InventoryItem[]));
     setOrders(safeParse(localStorage.getItem(LS_KEYS.orders), [] as OrderRecord[]));
   }, []);
 
   useEffect(() => localStorage.setItem(LS_KEYS.expenses, JSON.stringify(expenses)), [expenses]);
-  useEffect(() => localStorage.setItem(LS_KEYS.purchases, JSON.stringify(purchases)), [purchases]);
   useEffect(() => localStorage.setItem(LS_KEYS.transfers, JSON.stringify(transfers)), [transfers]);
   useEffect(() => localStorage.setItem(LS_KEYS.inventory, JSON.stringify(inventory)), [inventory]);
   useEffect(() => localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders)), [orders]);
@@ -588,56 +619,126 @@ export default function ERPRefactorV2Page() {
     setExpenseForm(defaultExpense);
   };
 
-  const savePurchase = () => {
+  const savePurchase = async () => {
     const qty = num(purchaseForm.qty);
     if (!purchaseForm.purchaseNo || !purchaseForm.purchaseDate || !purchaseForm.sku || qty <= 0) {
       alert("请填写采购单号、采购日期、SKU 和数量。");
       return;
     }
+
     const product = getProductBySku(purchaseForm.sku);
-    const record: PurchaseRecord = {
-      id: crypto.randomUUID(),
-      purchaseNo: purchaseForm.purchaseNo,
-      purchaseDate: purchaseForm.purchaseDate,
+    const payload = {
+      purchase_no: purchaseForm.purchaseNo,
+      purchase_date: purchaseForm.purchaseDate,
       warehouse: purchaseForm.warehouse,
       supplier: purchaseForm.supplier,
       sku: purchaseForm.sku,
-      productName: purchaseForm.productName || product?.chineseName || "",
+      product_name: purchaseForm.productName || product?.chineseName || "",
       variant: purchaseForm.variant || product?.spec || "",
       qty,
-      totalPurchaseMyr: num(purchaseForm.totalPurchaseMyr),
-      unitCostMyr: purchaseCalc.unitCostMyr,
-      trackingNo: purchaseForm.trackingNo,
+      total_purchase_myr: num(purchaseForm.totalPurchaseMyr),
+      unit_cost_myr: purchaseCalc.unitCostMyr,
+      tracking_no: purchaseForm.trackingNo,
       status: purchaseForm.status,
-      isInventorySynced: purchaseForm.status === "已签收" || purchaseForm.status === "已入库",
-      createdAt: new Date().toLocaleString(),
+      is_inventory_synced: purchaseForm.status === "已签收" || purchaseForm.status === "已入库",
     };
 
-    setPurchases((prev) => [record, ...prev]);
+    const { error: insertError } = await supabase.from("purchases").insert(payload);
 
-    if (record.isInventorySynced) {
+    if (insertError) {
+      alert("新增采购单失败");
+      console.error(insertError);
+      return;
+    }
+
+    if (payload.is_inventory_synced) {
       setInventory((prev) => {
         const next = [...prev];
-        const item = ensureInventoryRecord(next, record.warehouse, record.sku, record.productName, record.variant, record.supplier, record.unitCostMyr);
+        const item = ensureInventoryRecord(
+          next,
+          payload.warehouse as WarehouseName,
+          payload.sku,
+          payload.product_name,
+          payload.variant,
+          payload.supplier,
+          payload.unit_cost_myr
+        );
         item.stockQty = num(item.stockQty) + qty;
-        item.unitCostMyr = record.unitCostMyr;
-        item.supplier = record.supplier;
+        item.unitCostMyr = payload.unit_cost_myr;
+        item.supplier = payload.supplier;
         item.updatedAt = new Date().toLocaleString();
         return [...next];
       });
     }
+
+    const { data, error } = await supabase
+      .from("purchases")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      alert("刷新采购单列表失败");
+      console.error(error);
+      return;
+    }
+
+    const mapped = (data || []).map((item) => ({
+      id: item.id,
+      purchaseNo: item.purchase_no || "",
+      purchaseDate: item.purchase_date || "",
+      warehouse: item.warehouse || "中国仓库",
+      supplier: item.supplier || "",
+      sku: item.sku || "",
+      productName: item.product_name || "",
+      variant: item.variant || "",
+      qty: Number(item.qty || 0),
+      totalPurchaseMyr: Number(item.total_purchase_myr || 0),
+      unitCostMyr: Number(item.unit_cost_myr || 0),
+      trackingNo: item.tracking_no || "",
+      status: item.status || "待采购",
+      isInventorySynced: !!item.is_inventory_synced,
+      createdAt: item.created_at || "",
+    }));
+
+    setPurchases(mapped);
     setPurchaseForm(defaultPurchase);
   };
 
-  const markPurchaseSigned = (id: string) => {
+  const markPurchaseSigned = async (id: string) => {
     const purchase = purchases.find((p) => p.id === id);
     if (!purchase || purchase.isInventorySynced) return;
 
-    setPurchases((prev) => prev.map((p) => (p.id === id ? { ...p, status: "已入库", isInventorySynced: true } : p)));
+    const { error } = await supabase
+      .from("purchases")
+      .update({
+        status: "已入库",
+        is_inventory_synced: true,
+      })
+      .eq("id", id);
+
+    if (error) {
+      alert("更新采购单失败");
+      console.error(error);
+      return;
+    }
+
+    setPurchases((prev) =>
+      prev.map((p) =>
+        p.id === id ? { ...p, status: "已入库", isInventorySynced: true } : p
+      )
+    );
 
     setInventory((prev) => {
       const next = [...prev];
-      const item = ensureInventoryRecord(next, purchase.warehouse, purchase.sku, purchase.productName, purchase.variant, purchase.supplier, purchase.unitCostMyr);
+      const item = ensureInventoryRecord(
+        next,
+        purchase.warehouse,
+        purchase.sku,
+        purchase.productName,
+        purchase.variant,
+        purchase.supplier,
+        purchase.unitCostMyr
+      );
       item.stockQty = num(item.stockQty) + num(purchase.qty);
       item.unitCostMyr = purchase.unitCostMyr;
       item.supplier = purchase.supplier;
@@ -940,7 +1041,20 @@ export default function ERPRefactorV2Page() {
     setProducts((prev) => prev.filter((x) => x.id !== id));
   };
   const deleteExpense = (id: string) => setExpenses((prev) => prev.filter((x) => x.id !== id));
-  const deletePurchase = (id: string) => setPurchases((prev) => prev.filter((x) => x.id !== id));
+  const deletePurchase = async (id: string) => {
+    const { error } = await supabase
+      .from("purchases")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("删除采购单失败");
+      console.error(error);
+      return;
+    }
+
+    setPurchases((prev) => prev.filter((x) => x.id !== id));
+  };
   const deleteTransfer = (id: string) => setTransfers((prev) => prev.filter((x) => x.id !== id));
   const deleteInventory = (id: string) => setInventory((prev) => prev.filter((x) => x.id !== id));
   const deleteOrder = (id: string) => setOrders((prev) => prev.filter((x) => x.id !== id));
